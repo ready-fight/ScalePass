@@ -11,6 +11,10 @@ const eventParamsSchema = z.object({
   eventId: z.string().min(1)
 });
 
+const reservationParamsSchema = z.object({
+  reservationId: z.string().min(1)
+});
+
 export async function reservationRoutes(app: FastifyInstance) {
   app.post("/events/:eventId/reservations", async (request, reply) => {
     let authUser: AuthUser;
@@ -116,6 +120,123 @@ export async function reservationRoutes(app: FastifyInstance) {
     return reply.code(201).send({
       data: result.reservation
     });
+  });
+
+  app.delete("/me/reservations/:reservationId", async (request, reply) => {
+    let authUser: AuthUser;
+
+    try {
+      authUser = await request.jwtVerify<AuthUser>();
+    } catch {
+      return reply.code(401).send({
+        error: "Unauthorized"
+      });
+    }
+
+    const params = reservationParamsSchema.parse(request.params);
+
+    const result = await prisma.$transaction(async (tx) => {
+      const reservation = await tx.reservation.findFirst({
+        where: {
+          id: params.reservationId,
+          userId: authUser.sub
+        }
+      });
+
+      if (!reservation) {
+        return {
+          type: "not_found" as const
+        };
+      }
+
+      if (reservation.status === "CANCELLED") {
+        return {
+          type: "already_cancelled" as const,
+          reservation
+        };
+      }
+
+      await tx.$queryRaw`
+        SELECT "id"
+        FROM "Event"
+        WHERE "id" = ${reservation.eventId}
+        FOR UPDATE
+      `;
+
+      const cancelledReservation = await tx.reservation.update({
+        where: {
+          id: reservation.id
+        },
+        data: {
+          status: "CANCELLED"
+        }
+      });
+
+      let promotedReservation = null;
+
+      if (reservation.status === "CONFIRMED") {
+        const nextWaitlistedReservation = await tx.reservation.findFirst({
+          where: {
+            eventId: reservation.eventId,
+            status: "WAITLISTED"
+          },
+          orderBy: {
+            createdAt: "asc"
+          }
+        });
+
+        if (nextWaitlistedReservation) {
+          promotedReservation = await tx.reservation.update({
+            where: {
+              id: nextWaitlistedReservation.id
+            },
+            data: {
+              status: "CONFIRMED"
+            }
+          });
+        } else {
+          await tx.event.updateMany({
+            where: {
+              id: reservation.eventId,
+              reservedCount: {
+                gt: 0
+              }
+            },
+            data: {
+              reservedCount: {
+                decrement: 1
+              }
+            }
+          });
+        }
+      }
+
+      return {
+        type: "cancelled" as const,
+        cancelledReservation,
+        promotedReservation
+      };
+    });
+
+    if (result.type === "not_found") {
+      return reply.code(404).send({
+        error: "Reservation not found"
+      });
+    }
+
+    if (result.type === "already_cancelled") {
+      return reply.code(409).send({
+        error: "Reservation already cancelled",
+        reservation: result.reservation
+      });
+    }
+
+    return {
+      data: {
+        cancelledReservation: result.cancelledReservation,
+        promotedReservation: result.promotedReservation
+      }
+    };
   });
 
   app.get("/me/reservations", async (request, reply) => {
