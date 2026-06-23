@@ -9,7 +9,10 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "dev": "echo \"Use app-specific dev commands for now\""
+    "dev": "echo \"Use app-specific dev commands for now\"",
+    "infra:up": "docker compose -f infra/docker-compose.yml up -d",
+    "infra:down": "docker compose -f infra/docker-compose.yml down",
+    "infra:logs": "docker compose -f infra/docker-compose.yml logs -f"
   },
   "engines": {
     "node": ">=20"
