@@ -1,9 +1,16 @@
 import Fastify from "fastify";
+import jwt from "@fastify/jwt";
 import { prisma } from "./db.js";
+import { env } from "./env.js";
+import { authRoutes } from "./modules/auth/auth.routes.js";
 
 export function buildApp() {
   const app = Fastify({
     logger: true
+  });
+
+  app.register(jwt, {
+    secret: env.JWT_SECRET
   });
 
   app.get("/health", async () => {
@@ -21,6 +28,8 @@ export function buildApp() {
       database: "connected"
     };
   });
+
+  app.register(authRoutes);
 
   return app;
 }
