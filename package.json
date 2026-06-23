@@ -1,0 +1,17 @@
+{
+  "name": "scalepass",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Scalable event reservation platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev": "echo \"Use app-specific dev commands for now\""
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
