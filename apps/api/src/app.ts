@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import { prisma } from "./db.js";
 
 export function buildApp() {
   const app = Fastify({
@@ -13,8 +14,11 @@ export function buildApp() {
   });
 
   app.get("/ready", async () => {
+    await prisma.$queryRaw`SELECT 1`;
+
     return {
-      status: "ready"
+      status: "ready",
+      database: "connected"
     };
   });
 
