@@ -7,6 +7,7 @@ import { env } from "./env.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { eventRoutes } from "./modules/events/event.routes.js";
 import { reservationRoutes } from "./modules/reservations/reservation.routes.js";
+import { closeNotificationQueue } from "./jobs/notification.queue.js";
 
 export function buildApp() {
   const app = Fastify({
@@ -31,6 +32,7 @@ export function buildApp() {
   });
 
   app.addHook("onClose", async () => {
+    await closeNotificationQueue();
     await redis.quit();
   });
 

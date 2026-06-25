@@ -2,7 +2,7 @@ import { invalidateEventCache } from "../events/event.cache.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../../db.js";
-
+import { enqueueNotification } from "../../jobs/notification.queue.js";
 
 type AuthUser = {
   sub: string;
@@ -18,64 +18,64 @@ const reservationParamsSchema = z.object({
 });
 
 export async function reservationRoutes(app: FastifyInstance) {
-  app.post("/events/:eventId/reservations", 
-  {
-    config: {
-      rateLimit: {
-        max: 30,
-        timeWindow: "1 minute"
+  app.post("/events/:eventId/reservations",
+    {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute"
+        }
       }
-    }
-  },
-  async (request, reply) => {
-    let authUser: AuthUser;
+    },
+    async (request, reply) => {
+      let authUser: AuthUser;
 
-    try {
-      authUser = await request.jwtVerify<AuthUser>();
-    } catch {
-      return reply.code(401).send({
-        error: "Unauthorized"
-      });
-    }
+      try {
+        authUser = await request.jwtVerify<AuthUser>();
+      } catch {
+        return reply.code(401).send({
+          error: "Unauthorized"
+        });
+      }
 
-    const params = eventParamsSchema.parse(request.params);
+      const params = eventParamsSchema.parse(request.params);
 
-    const result = await prisma.$transaction(async (tx) => {
-      const existingReservation = await tx.reservation.findUnique({
-        where: {
-          userId_eventId: {
-            userId: authUser.sub,
-            eventId: params.eventId
+      const result = await prisma.$transaction(async (tx) => {
+        const existingReservation = await tx.reservation.findUnique({
+          where: {
+            userId_eventId: {
+              userId: authUser.sub,
+              eventId: params.eventId
+            }
           }
+        });
+
+        if (
+          existingReservation &&
+          existingReservation.status !== "CANCELLED"
+        ) {
+          return {
+            type: "existing" as const,
+            reservation: existingReservation
+          };
         }
-      });
 
-      if (
-        existingReservation &&
-        existingReservation.status !== "CANCELLED"
-      ) {
-        return {
-          type: "existing" as const,
-          reservation: existingReservation
-        };
-      }
+        const event = await tx.event.findUnique({
+          where: {
+            id: params.eventId
+          },
+          select: {
+            id: true
+          }
+        });
 
-      const event = await tx.event.findUnique({
-        where: {
-          id: params.eventId
-        },
-        select: {
-          id: true
+        if (!event) {
+          return {
+            type: "not_found" as const
+          };
         }
-      });
 
-      if (!event) {
-        return {
-          type: "not_found" as const
-        };
-      }
-
-      const updatedRows = await tx.$executeRaw`
+        const updatedRows = await tx.$executeRaw`
         UPDATE "Event"
         SET "reservedCount" = "reservedCount" + 1,
             "updatedAt" = NOW()
@@ -83,57 +83,95 @@ export async function reservationRoutes(app: FastifyInstance) {
           AND "reservedCount" < "capacity"
       `;
 
-      const status = updatedRows === 1 ? "CONFIRMED" : "WAITLISTED";
+        const status = updatedRows === 1 ? "CONFIRMED" : "WAITLISTED";
 
-      if (existingReservation) {
-        const reservation = await tx.reservation.update({
-          where: {
-            id: existingReservation.id
-          },
+        if (existingReservation) {
+          const reservation = await tx.reservation.update({
+            where: {
+              id: existingReservation.id
+            },
+            data: {
+              status
+            }
+          });
+
+          const notification = await tx.notification.create({
+            data: {
+              userId: authUser.sub,
+              reservationId: reservation.id,
+              type:
+                status === "CONFIRMED"
+                  ? "RESERVATION_CONFIRMED"
+                  : "RESERVATION_WAITLISTED",
+              payload: {
+                eventId: params.eventId,
+                status
+              }
+            }
+          });
+
+          return {
+            type: "created" as const,
+            reservation,
+            notificationIds: [notification.id]
+          };
+        }
+
+        const reservation = await tx.reservation.create({
           data: {
+            userId: authUser.sub,
+            eventId: params.eventId,
             status
+          }
+        });
+
+        const notification = await tx.notification.create({
+          data: {
+            userId: authUser.sub,
+            reservationId: reservation.id,
+            type:
+              status === "CONFIRMED"
+                ? "RESERVATION_CONFIRMED"
+                : "RESERVATION_WAITLISTED",
+            payload: {
+              eventId: params.eventId,
+              status
+            }
           }
         });
 
         return {
           type: "created" as const,
-          reservation
+          reservation,
+          notificationIds: [notification.id]
         };
+      });
+
+      if (result.type === "not_found") {
+        return reply.code(404).send({
+          error: "Event not found"
+        });
       }
 
-      const reservation = await tx.reservation.create({
-        data: {
-          userId: authUser.sub,
-          eventId: params.eventId,
-          status
-        }
-      });
+      if (result.type === "existing") {
+        return reply.code(409).send({
+          error: "Reservation already exists",
+          reservation: result.reservation
+        });
+      }
 
-      return {
-        type: "created" as const,
-        reservation
-      };
+      await invalidateEventCache(params.eventId);
+
+      await Promise.all(
+        result.notificationIds.map((notificationId) =>
+          enqueueNotification(notificationId)
+        )
+      );
+
+      return reply.code(201).send({
+        data: result.reservation
+      });
     });
-
-    if (result.type === "not_found") {
-      return reply.code(404).send({
-        error: "Event not found"
-      });
-    }
-
-    if (result.type === "existing") {
-      return reply.code(409).send({
-        error: "Reservation already exists",
-        reservation: result.reservation
-      });
-    }
-
-    await invalidateEventCache(params.eventId);
-
-    return reply.code(201).send({
-      data: result.reservation
-    });
-  });
 
   app.delete("/me/reservations/:reservationId", async (request, reply) => {
     let authUser: AuthUser;
@@ -185,6 +223,21 @@ export async function reservationRoutes(app: FastifyInstance) {
         }
       });
 
+      const notificationIds: string[] = [];
+
+      const cancellationNotification = await tx.notification.create({
+        data: {
+          userId: authUser.sub,
+          reservationId: cancelledReservation.id,
+          type: "RESERVATION_CANCELLED",
+          payload: {
+            eventId: reservation.eventId
+          }
+        }
+      });
+
+      notificationIds.push(cancellationNotification.id);
+
       let promotedReservation = null;
 
       if (reservation.status === "CONFIRMED") {
@@ -207,6 +260,19 @@ export async function reservationRoutes(app: FastifyInstance) {
               status: "CONFIRMED"
             }
           });
+
+          const promotionNotification = await tx.notification.create({
+            data: {
+              userId: promotedReservation.userId,
+              reservationId: promotedReservation.id,
+              type: "WAITLIST_PROMOTED",
+              payload: {
+                eventId: reservation.eventId
+              }
+            }
+          });
+
+          notificationIds.push(promotionNotification.id);
         } else {
           await tx.event.updateMany({
             where: {
@@ -227,7 +293,8 @@ export async function reservationRoutes(app: FastifyInstance) {
       return {
         type: "cancelled" as const,
         cancelledReservation,
-        promotedReservation
+        promotedReservation,
+        notificationIds
       };
     });
 
@@ -245,6 +312,12 @@ export async function reservationRoutes(app: FastifyInstance) {
     }
 
     await invalidateEventCache(result.cancelledReservation.eventId);
+
+    await Promise.all(
+      result.notificationIds.map((notificationId) =>
+        enqueueNotification(notificationId)
+      )
+    );
 
     return {
       data: {

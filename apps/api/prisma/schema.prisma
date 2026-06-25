@@ -18,6 +18,13 @@ enum ReservationStatus {
   CANCELLED
 }
 
+enum NotificationType {
+  RESERVATION_CONFIRMED
+  RESERVATION_WAITLISTED
+  RESERVATION_CANCELLED
+  WAITLIST_PROMOTED
+}
+
 model User {
   id           String        @id @default(cuid())
   email        String        @unique
@@ -27,6 +34,7 @@ model User {
   updatedAt    DateTime      @updatedAt
 
   reservations Reservation[]
+  notifications Notification[]
 }
 
 model Event {
@@ -50,10 +58,28 @@ model Reservation {
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
 
+  notifications Notification[]
+
   user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   event     Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@unique([userId, eventId])
   @@index([eventId, status])
   @@index([userId])
+}
+
+model Notification {
+  id            String           @id @default(cuid())
+  userId        String
+  reservationId String?
+  type          NotificationType
+  payload       Json
+  processedAt   DateTime?
+  createdAt     DateTime         @default(now())
+
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reservation   Reservation?     @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([processedAt])
 }
