@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import jwt from "@fastify/jwt";
+import rateLimit from "@fastify/rate-limit";
 import { redis } from "./cache.js";
 import { prisma } from "./db.js";
 import { env } from "./env.js";
@@ -14,6 +15,19 @@ export function buildApp() {
 
   app.register(jwt, {
     secret: env.JWT_SECRET
+  });
+
+  app.register(rateLimit, {
+    global: true,
+    max: 1000,
+    timeWindow: "1 minute",
+    redis,
+    nameSpace: "scalepass-rate-limit:",
+    errorResponseBuilder: () => {
+      return {
+        error: "Too many requests"
+      };
+    }
   });
 
   app.addHook("onClose", async () => {

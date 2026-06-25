@@ -18,7 +18,16 @@ const reservationParamsSchema = z.object({
 });
 
 export async function reservationRoutes(app: FastifyInstance) {
-  app.post("/events/:eventId/reservations", async (request, reply) => {
+  app.post("/events/:eventId/reservations", 
+  {
+    config: {
+      rateLimit: {
+        max: 30,
+        timeWindow: "1 minute"
+      }
+    }
+  },
+  async (request, reply) => {
     let authUser: AuthUser;
 
     try {
