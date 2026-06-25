@@ -1,6 +1,8 @@
+import { invalidateEventCache } from "../events/event.cache.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../../db.js";
+
 
 type AuthUser = {
   sub: string;
@@ -117,6 +119,8 @@ export async function reservationRoutes(app: FastifyInstance) {
       });
     }
 
+    await invalidateEventCache(params.eventId);
+
     return reply.code(201).send({
       data: result.reservation
     });
@@ -230,6 +234,8 @@ export async function reservationRoutes(app: FastifyInstance) {
         reservation: result.reservation
       });
     }
+
+    await invalidateEventCache(result.cancelledReservation.eventId);
 
     return {
       data: {
