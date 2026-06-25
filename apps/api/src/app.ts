@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import jwt from "@fastify/jwt";
+import { redis } from "./cache.js";
 import { prisma } from "./db.js";
 import { env } from "./env.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
@@ -15,6 +16,10 @@ export function buildApp() {
     secret: env.JWT_SECRET
   });
 
+  app.addHook("onClose", async () => {
+    await redis.quit();
+  });
+
   app.get("/health", async () => {
     return {
       status: "ok",
@@ -24,10 +29,12 @@ export function buildApp() {
 
   app.get("/ready", async () => {
     await prisma.$queryRaw`SELECT 1`;
+    await redis.ping();
 
     return {
       status: "ready",
-      database: "connected"
+      database: "connected",
+      redis: "connected"
     };
   });
 
