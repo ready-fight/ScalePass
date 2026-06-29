@@ -1,0 +1,19 @@
+{
+  "name": "scalepass-aws",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AWS-centered high-scale event reservation platform.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @scalepass/api",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test --workspaces"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
